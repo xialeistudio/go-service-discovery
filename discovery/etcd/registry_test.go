@@ -2,6 +2,7 @@ package etcd
 
 import (
 	"context"
+	json "github.com/json-iterator/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/xialeistudio/go-service-discovery/discovery"
 	"net"
@@ -46,7 +47,7 @@ func TestEtcdRegistry(t *testing.T) {
 		a.Nil(err)
 		a.Len(nodes, 0)
 	})
-	t.Run("Register multi nodes with multi tags", func(t *testing.T) {
+	t.Run("Register multi nodeListMap with multi tags", func(t *testing.T) {
 		node1 := &discovery.ServiceNode{
 			ServiceName: "test",
 			IP:          net.IPv4(127, 0, 0, 1),
@@ -78,6 +79,8 @@ func TestEtcdRegistry(t *testing.T) {
 		})
 		a.Nil(err)
 		a.Len(nodes, 1)
+		str, _ := json.MarshalToString(nodes)
+		t.Log(str)
 		a.Equal(node1, nodes[0])
 		// 获取节点
 		nodes, err = r.GetNodes(context.Background(), "test", map[string]string{

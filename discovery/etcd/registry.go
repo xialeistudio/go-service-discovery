@@ -8,6 +8,7 @@ import (
 	"go.etcd.io/etcd/client/v3"
 	"log"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -19,7 +20,8 @@ var (
 )
 
 type registry struct {
-	nodes   map[string][]*discovery.ServiceNode
+	nodeListMap *sync.Map // <serviceName, <nodeKey, *ServiceNode>>
+
 	client  *clientv3.Client
 	watcher clientv3.Watcher
 	kv      clientv3.KV
@@ -35,16 +37,17 @@ func NewRegistry(endpoints []string) (discovery.NodeRegistry, error) {
 		return nil, fmt.Errorf("failed to create etcd client: %v", err)
 	}
 	return &registry{
-		nodes:   make(map[string][]*discovery.ServiceNode),
-		client:  client,
-		kv:      clientv3.NewKV(client),
-		watcher: clientv3.NewWatcher(client),
+		nodeListMap: &sync.Map{},
+		client:      client,
+		kv:          clientv3.NewKV(client),
+		watcher:     clientv3.NewWatcher(client),
 	}, nil
 }
 
 func (r *registry) GetNodes(ctx context.Context, serviceName string, tags map[string]string) ([]*discovery.ServiceNode, error) {
 	// 检查本地缓存是否有服务节点
-	nodes, exists := r.nodes[serviceName]
+
+	nodes, exists := r.nodeListMap.Load(serviceName)
 	if !exists {
 		var err error
 		// 本地缓存为空，从 etcd 拉取
@@ -53,18 +56,20 @@ func (r *registry) GetNodes(ctx context.Context, serviceName string, tags map[st
 			return nil, err
 		}
 		// 缓存到本地
-		r.nodes[serviceName] = nodes
+		r.nodeListMap.Store(serviceName, nodes)
 		// 启动协程监听节点变化
 		go r.watchNodes(ctx, serviceName)
 	}
 
 	// 根据标签过滤服务节点
 	var filteredNodes []*discovery.ServiceNode
-	for _, node := range nodes {
+	nodes.(*sync.Map).Range(func(key, value interface{}) bool {
+		node := value.(*discovery.ServiceNode)
 		if discovery.MatchTags(node.Tags, tags) {
 			filteredNodes = append(filteredNodes, node)
 		}
-	}
+		return true
+	})
 
 	return filteredNodes, nil
 }
@@ -121,31 +126,28 @@ func (r *registry) keepLeaseAlive(leaseId clientv3.LeaseID, node *discovery.Serv
 }
 
 func (r *registry) removeNode(node *discovery.ServiceNode) {
-	key := makeNodeKey(node)
-	var updateNodes []*discovery.ServiceNode
-	for _, n := range r.nodes[node.ServiceName] {
-		if makeNodeKey(n) != key {
-			updateNodes = append(updateNodes, n)
-		}
-	}
-	r.nodes[node.ServiceName] = updateNodes
+	r.nodeListMap.Range(func(key, value interface{}) bool {
+		nodes := value.(*sync.Map)
+		nodes.Delete(makeNodeKey(node))
+		return true
+	})
 }
 
-func (r *registry) pullNodes(ctx context.Context, serviceName string) ([]*discovery.ServiceNode, error) {
+func (r *registry) pullNodes(ctx context.Context, serviceName string) (*sync.Map, error) {
 	resp, err := r.kv.Get(ctx, serviceName+"/", clientv3.WithPrefix())
 	if err != nil {
-		return nil, fmt.Errorf("failed to get nodes from etcd: %v", err)
+		return nil, fmt.Errorf("failed to get nodeListMap from etcd: %v", err)
 	}
-	var nodes []*discovery.ServiceNode
+	var nodes sync.Map
 	for _, kv := range resp.Kvs {
 		node := &discovery.ServiceNode{}
 		if err := json.Unmarshal(kv.Value, node); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal node data: %v", err)
 		}
-		nodes = append(nodes, node)
+		nodes.Store(string(kv.Key), node)
 	}
 
-	return nodes, nil
+	return &nodes, nil
 }
 
 func (r *registry) watchNodes(ctx context.Context, serviceName string) {
@@ -160,16 +162,13 @@ func (r *registry) watchNodes(ctx context.Context, serviceName string) {
 					log.Printf("failed to unmarshal node data: %v", err)
 					continue
 				}
-				r.nodes[serviceName] = append(r.nodes[serviceName], node)
+				r.nodeListMap.LoadOrStore(serviceName, &sync.Map{})
+				nodes, _ := r.nodeListMap.Load(serviceName)
+				nodes.(*sync.Map).Store(string(ev.Kv.Key), node)
 			case clientv3.EventTypeDelete:
 				// 删除服务节点
-				var updatedNodes []*discovery.ServiceNode
-				for _, node := range r.nodes[serviceName] {
-					if node.IP.String() != string(ev.Kv.Key) {
-						updatedNodes = append(updatedNodes, node)
-					}
-				}
-				r.nodes[serviceName] = updatedNodes
+				nodes, _ := r.nodeListMap.Load(serviceName)
+				nodes.(*sync.Map).Delete(string(ev.Kv.Key))
 			}
 		}
 	}
