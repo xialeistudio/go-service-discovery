@@ -10,6 +10,7 @@ go-service-discovery 是一个为现代云原生应用设计的基于 Go 语言�
 
 ## 支持的平台
 + etcd v3.x
++ consul v1
 
 ## 快速开始
 
