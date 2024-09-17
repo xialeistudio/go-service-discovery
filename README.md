@@ -15,7 +15,8 @@ for service registration, discovery, and monitoring, leveraging the power of etc
 ## Supporting platforms
 
 + etcd v3.x
-+ consul v1
++ consul
++ zookeeper
 
 ## Get Started
 
