@@ -2,8 +2,8 @@ package client
 
 import (
 	"context"
-	"go-service-discovery/discovery"
-	"go-service-discovery/loadbalancer"
+	"github.com/xialeistudio/go-service-discovery/discovery"
+	"github.com/xialeistudio/go-service-discovery/loadbalancer"
 )
 
 // Client 服务发现客户端
