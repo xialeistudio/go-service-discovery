@@ -18,6 +18,12 @@ for service registration, discovery, and monitoring, leveraging the power of etc
 + consul
 + zookeeper
 
+## Built-in Load Balancing Strategies
+
++ Random Selection: Randomly selects a service instance.
++ Round-Robin: Cycles through service instances in a round-robin fashion.
++ Weighted Round-Robin: Cycles through service instances in a round-robin fashion with weights.
+
 ## Get Started
 
 The following code uses etcd as an example to demonstrate how to use it.
